@@ -1,0 +1,114 @@
+:root{
+  --void: #05040a;
+  --script-font: 'Caveat', 'Segoe Script', cursive;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+*{ box-sizing: border-box; }
+
+html, body{
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--void);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body{
+  position: fixed;
+  inset: 0;
+  touch-action: none;
+}
+
+#scene{
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#flash{
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+#flash.pulse{
+  animation: flash-pulse 700ms ease-out;
+}
+@keyframes flash-pulse{
+  0%{ opacity: 0; }
+  12%{ opacity: 0.55; }
+  100%{ opacity: 0; }
+}
+
+/* ---------- final centered message ---------- */
+.final-text{
+  position: fixed;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, -50%);
+  z-index: 8;
+  font-family: var(--script-font);
+  font-weight: 700;
+  font-size: clamp(1.3rem, 6.4vw, 2.5rem);
+  color: #fff2f6;
+  text-shadow: 0 0 14px rgba(255, 120, 170, 0.55), 0 0 28px rgba(255, 77, 141, 0.3);
+  text-align: center;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 1.6s ease;
+}
+.final-text.show{
+  opacity: 1;
+}
+.final-text .heart-glyph{
+  color: #ff3b4e;
+  text-shadow: 0 0 14px rgba(255, 59, 78, 0.85);
+  margin: 0 0.08em;
+}
+.hidden{ display: none !important; }
+
+/* ---------- sound toggle ---------- */
+.sound-btn{
+  position: fixed;
+  top: 1.1rem;
+  right: 1.1rem;
+  z-index: 40;
+  width: 2.3rem;
+  height: 2.3rem;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 200, 220, 0.28);
+  background: rgba(10, 4, 8, 0.5);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  color: rgba(255, 220, 230, 0.8);
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 300ms ease, color 300ms ease;
+}
+.sound-btn.playing{
+  animation: sound-pulse 2.2s ease-in-out infinite;
+}
+@keyframes sound-pulse{
+  0%, 100%{ box-shadow: 0 0 0 rgba(255, 77, 141, 0); }
+  50%{ box-shadow: 0 0 14px rgba(255, 77, 141, 0.4); }
+}
+
+@media (prefers-reduced-motion: reduce){
+  .final-text{ transition: opacity 0.3s ease; }
+  .sound-btn.playing{ animation: none; }
+  #flash.pulse{ animation: none; opacity: 0; }
+}
+
+@media (max-width: 380px){
+  .final-text{ font-size: 1.3rem; }
+}
