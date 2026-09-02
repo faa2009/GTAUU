@@ -441,6 +441,7 @@ class ShimmerDotParticle {
     this.microFreqX = rand(0.5, 1.6);
     this.microFreqY = rand(0.5, 1.6);
     this.brightPulseOn = Math.random() < (opts.brightPulseChance ?? 0.18);
+    this.glowEligible = Math.random() < 0.12; // only a few dots carry the soft glow — keeps frame cost low
     this.brightPulseSpeed = rand(0.6, 1.3);
 
     // ---- dissolve: crack-apart into light dust ----
@@ -529,17 +530,14 @@ class ShimmerDotParticle {
     const rR = this.ringR;
     const cR = this.coreR * (0.88 + sh * 0.12) * (1 + pulse * pulseMag);
 
-    // ---- soft glow, only near completion / during hold — kept very subtle ----
+    // ---- soft glow, only for a sparse subset of dots near completion/hold — no shadowBlur (expensive) ----
     const glowAmt = Math.max(formation.glow || 0, pulse * 0.6);
-    if (glowAmt > 0.01 && phase !== "dissolving") {
-      ctx.globalAlpha = alpha * glowAmt * 0.3;
-      ctx.shadowBlur = rR * 1.6;
-      ctx.shadowColor = "rgba(255,255,255,0.85)";
+    if (this.glowEligible && glowAmt > 0.01 && phase !== "dissolving") {
+      ctx.globalAlpha = alpha * glowAmt * 0.4;
       ctx.fillStyle = "rgba(255,255,255,0.55)";
       ctx.beginPath();
-      ctx.arc(rx, ry, rR * 0.7, 0, Math.PI * 2);
+      ctx.arc(rx, ry, rR * 1.5, 0, Math.PI * 2);
       ctx.fill();
-      ctx.shadowBlur = 0;
     }
 
     // ---- Layer 1: outer gray ring (makes the circle-with-ring appearance) ----
@@ -560,7 +558,7 @@ class ShimmerDotParticle {
     ctx.fill();
 
     // ---- Layer 4: tiny hot-white specular on peak shimmer ----
-    if (sh > 0.88) {
+    if (sh > 0.92) {
       ctx.globalAlpha = alpha * sh * 0.7;
       ctx.fillStyle   = "rgba(255, 255, 255, 1)";
       ctx.beginPath();
@@ -671,9 +669,9 @@ async function playLockScale(formation) {
 async function playDigit(str) {
   // Digit fills ~62% of screen height, sampled as a dense filled numeral
   // (bold rasterized glyph, staggered grid) instead of a sparse dot-matrix font.
-  const spacing = clamp(Math.round(canvasHeight * 0.014), 7, 13);
+  const spacing = clamp(Math.round(canvasHeight * 0.024), 12, 20);
   const points = sampleFilledGlyphPoints(str, { targetHeightRatio: 0.62, spacing });
-  const cs = spacing * 1.55; // controls each dot's ring/core size — slight overlap for a solid filled look
+  const cs = spacing * 1.7; // controls each dot's ring/core size — bigger overlap compensates for fewer dots
   const formation = await playFormation(points, cs, {
     maxDelay: 0.2,
     overshootChance: 0.35,
@@ -692,7 +690,7 @@ async function playDigit(str) {
   // crack apart & dissolve; let the next digit start falling before this one
   // has fully faded, so 3 -> 2 -> 1 feels seamless rather than gapped
   const dissolving = formOut(formation, CONFIG.timing.digitDissolveMs);
-  await sleep(CONFIG.timing.digitDissolveMs * 0.65);
+  await sleep(CONFIG.timing.digitDissolveMs * 0.8);
   dissolving.catch(() => {}); // let the tail end of the dissolve finish in the background
 }
 
