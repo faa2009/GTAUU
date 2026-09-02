@@ -669,8 +669,12 @@ async function playLockScale(formation) {
 async function playDigit(str) {
   // Digit fills ~62% of screen height, sampled as a dense filled numeral
   // (bold rasterized glyph, staggered grid) instead of a sparse dot-matrix font.
-  const spacing = clamp(Math.round(canvasHeight * 0.024), 12, 20);
-  const points = sampleFilledGlyphPoints(str, { targetHeightRatio: 0.62, spacing });
+  const mobile = isMobile();
+  const heightRatio = mobile ? 0.48 : 0.56;                 // smaller digit — was filling the whole phone screen
+  const spacing = mobile
+    ? clamp(Math.round(canvasHeight * 0.034), 16, 26)       // fewer, larger dots on phones (was causing the open-delay)
+    : clamp(Math.round(canvasHeight * 0.026), 13, 22);
+  const points = sampleFilledGlyphPoints(str, { targetHeightRatio: heightRatio, spacing });
   const cs = spacing * 1.7; // controls each dot's ring/core size — bigger overlap compensates for fewer dots
   const formation = await playFormation(points, cs, {
     maxDelay: 0.2,
