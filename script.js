@@ -706,8 +706,10 @@ const WORD_PROFILES = {
 };
 
 async function playWord(str) {
-  // Word fills ~24% of screen height.
-  const cs = Math.round(canvasHeight * 0.24 / 7);
+  // Word size — smaller on mobile so it doesn't dominate the phone screen.
+  const mobile = isMobile();
+  const heightRatio = mobile ? 0.16 : 0.2;
+  const cs = Math.round(canvasHeight * heightRatio / 7);
   const points = sampleTextPoints(str, { cellSize: cs });
   const profile = WORD_PROFILES[str.toLowerCase()] || WORD_PROFILES.you;
 
