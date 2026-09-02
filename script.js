@@ -645,6 +645,39 @@ async function playDigit(str) {
   dissolving.catch(() => {}); // let the tail end of the dissolve finish in the background
 }
 
+// Display the countdown digit as a simple 3x3 grid of points
+async function playDigitGrid(str) {
+  const centerX = canvasWidth / 2;
+  const centerY = canvasHeight * 0.44;
+
+  // cell size approximately related to viewport; spacing between grid cells
+  const cs = Math.round(Math.min(canvasWidth, canvasHeight) * 0.045);
+  const spacing = Math.round(cs * 1.6);
+
+  const points = [];
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      points.push({
+        x: centerX + (c - 1) * spacing,
+        y: centerY + (r - 1) * spacing
+      });
+    }
+  }
+
+  const formation = await playFormation(points, cs, {
+    maxDelay: 0.12,
+    overshootChance: 0.2,
+    overshootMag: 0.4,
+    driftScale: 0.6,
+    microAmp: 0.8,
+    pulseIntensity: 0.10
+  });
+
+  await formIn(formation, CONFIG.timing.digitFormMs);
+  await sleep(CONFIG.timing.digitHoldMs);
+  await formOut(formation, CONFIG.timing.digitDissolveMs);
+}
+
 const WORD_PROFILES = {
   you:  { maxDelay: 0.16, overshootChance: 0.25, overshootMag: 0.4, driftScale: 0.7,  fallSpread: 1.0, microAmp: 1.0, brightPulseChance: 0.12, sparkleCount: 0,  pulseIntensity: 0.10, dramatic: false },
   are:  { maxDelay: 0.2,  overshootChance: 0.5,  overshootMag: 0.7, driftScale: 1.2,  fallSpread: 1.4, microAmp: 1.1, brightPulseChance: 0.22, sparkleCount: 6,  pulseIntensity: 0.12, dramatic: false },
@@ -921,7 +954,7 @@ async function runSequence() {
   await sleep(CONFIG.timing.introMs);
 
   for (let n = CONFIG.countdownFrom; n >= 1; n--) {
-    await playDigit(String(n));
+    await playDigitGrid(String(n));
     await sleep(40);
   }
 
