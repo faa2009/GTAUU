@@ -51,6 +51,13 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const rand = (a, b) => a + Math.random() * (b - a);
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+// subtle overshoot-then-settle easing, used for magnetic-attraction formation
+function easeOutBack(t, mag = 0.9) {
+  const c1 = mag;
+  const c3 = c1 + 1;
+  const x = t - 1;
+  return 1 + c3 * x * x * x + c1 * x * x;
+}
 
 function tweenValue(obj, key, from, to, durationMs, easing = easeOutCubic) {
   return new Promise((resolve) => {
@@ -355,8 +362,8 @@ class DotParticle {
    Matches frame_005.png reference style exactly.
    ============================================================ */
 class ShimmerDotParticle {
-  constructor(cellSize) {
-    this.resetFall();
+  constructor(cellSize, opts = {}) {
+    this.resetFall(opts.fallSpread ?? 1);
     this.targetX = 0;
     this.targetY = 0;
     // cellSize drives both ring radius and core radius
@@ -367,31 +374,122 @@ class ShimmerDotParticle {
     this.shimmer = 1;
     this.renderX = this.fallX;
     this.renderY = this.fallY;
+
+    // ---- formation personality: staggered magnetic attraction ----
+    this.delayFrac  = rand(0, opts.maxDelay ?? 0.2);              // ~0-100ms of the form window
+    this.useBack    = Math.random() < (opts.overshootChance ?? 0.4);
+    this.backMag    = rand(0.3, opts.overshootMag ?? 0.7);
+    this.driftAmp   = rand(4, 16) * (opts.driftScale ?? 1);       // horizontal wander while falling/attracting
+    this.driftPhase = rand(0, Math.PI * 2);
+    this.driftFreq  = rand(0.6, 1.4);
+
+    // ---- hold: micro floating + shimmer ----
+    const microAmp = opts.microAmp ?? 1.5;
+    this.microAmpX  = rand(0.4, microAmp);
+    this.microAmpY  = rand(0.4, microAmp);
+    this.microFreqX = rand(0.5, 1.6);
+    this.microFreqY = rand(0.5, 1.6);
+    this.brightPulseOn = Math.random() < (opts.brightPulseChance ?? 0.18);
+    this.brightPulseSpeed = rand(0.6, 1.3);
+
+    // ---- dissolve: crack-apart into light dust ----
+    this.breakAngle   = rand(0, Math.PI * 2);
+    this.breakSpeed   = rand(0.5, 1.6);
+    this.breakGravity = Math.random() < 0.5;
+    this.breakLateral = rand(-1, 1);
+    this.dissolveOriginX = this.fallX;
+    this.dissolveOriginY = this.fallY;
+
+    this.sparkle = !!opts.sparkle;      // tiny secondary decorative dot (not part of the letterform)
+    if (this.sparkle) {
+      this.ringR *= 0.32;
+      this.coreR *= 0.32;
+    }
   }
-  resetFall() {
-    this.fallX = rand(0, canvasWidth);
-    this.fallY = rand(-canvasHeight, 0);
+  resetFall(spread = 1) {
+    const pad = canvasWidth * (spread - 1) * 0.5;
+    this.fallX = rand(-pad, canvasWidth + pad);
+    this.fallY = rand(-canvasHeight * spread, 0);
     this.fallSpeed = rand(0.5, 1.5);
   }
-  update(dt, influence, timeSec) {
-    this.fallY += this.fallSpeed * dt * 0.07;
-    if (this.fallY > canvasHeight + 20) {
-      this.fallX = rand(0, canvasWidth);
-      this.fallY = -20;
+  update(dt, formation, timeSec) {
+    const phase = formation.phase;
+
+    if (phase === "forming") {
+      this.fallY += this.fallSpeed * dt * 0.07;
+      if (this.fallY > canvasHeight + 20) {
+        this.fallX = rand(0, canvasWidth);
+        this.fallY = -20;
+      }
+      // raw local progress, gated by this particle's own small delay
+      const raw = clamp((formation.t - this.delayFrac) / Math.max(0.0001, 1 - this.delayFrac), 0, 1);
+      const eased = this.useBack ? easeOutBack(raw, this.backMag) : easeOutCubic(raw);
+      const driftFade = 1 - easeOutCubic(raw); // horizontal wander fades out as it locks onto target
+      const driftX = Math.sin(timeSec * this.driftFreq + this.driftPhase) * this.driftAmp * driftFade;
+      this.renderX = lerp(this.fallX, this.targetX, eased) + driftX;
+      this.renderY = lerp(this.fallY, this.targetY, eased);
+      this.shimmer = 0.78 + Math.abs(Math.sin(timeSec * this.shimmerSpeed + this.phase)) * 0.22;
+      this.dissolveOriginX = this.renderX;
+      this.dissolveOriginY = this.renderY;
+    } else if (phase === "holding") {
+      const mx = Math.sin(timeSec * this.microFreqX + this.phase) * this.microAmpX;
+      const my = Math.cos(timeSec * this.microFreqY + this.phase * 1.3) * this.microAmpY;
+      this.renderX = this.targetX + mx;
+      this.renderY = this.targetY + my;
+      const pulseBoost = this.brightPulseOn
+        ? Math.max(0, Math.sin(timeSec * this.brightPulseSpeed + this.phase)) * 0.3
+        : 0;
+      this.shimmer = 0.78 + Math.abs(Math.sin(timeSec * this.shimmerSpeed + this.phase)) * 0.22 + pulseBoost;
+      this.dissolveOriginX = this.renderX;
+      this.dissolveOriginY = this.renderY;
+    } else if (phase === "dissolving") {
+      const t = formation.t; // 0 -> 1 dissolve progress
+      const sec = formation.dissolveElapsed / 1000;
+      const radial = t * this.breakSpeed * 130;
+      const gravity = this.breakGravity ? t * t * 70 : 0;
+      const lateral = Math.sin(sec * 3 + this.phase) * this.breakLateral * 26;
+      this.renderX = this.dissolveOriginX + Math.cos(this.breakAngle) * radial + lateral;
+      this.renderY = this.dissolveOriginY + Math.sin(this.breakAngle) * radial * 0.7 + gravity;
+      this.shimmer = 0.55;
     }
-    this.renderX = lerp(this.fallX, this.targetX, influence);
-    this.renderY = lerp(this.fallY, this.targetY, influence);
-    // gentle shimmer on brightness
-    this.shimmer = 0.78 + Math.abs(Math.sin(timeSec * this.shimmerSpeed + this.phase)) * 0.22;
   }
-  draw(influence, globalFade) {
+  draw(formation, globalFade) {
+    const phase = formation.phase;
+    let influence = 1;
+    if (phase === "forming") {
+      influence = clamp((formation.t - this.delayFrac) / Math.max(0.0001, 1 - this.delayFrac), 0, 1);
+    } else if (phase === "dissolving") {
+      influence = clamp(1 - formation.t, 0, 1);
+    }
     if (influence < 0.02) return;
-    const sh    = this.shimmer;
-    const alpha = clamp(influence, 0.05, 1) * globalFade;
-    const rx    = this.renderX;
-    const ry    = this.renderY;
-    const rR    = this.ringR;
-    const cR    = this.coreR * (0.88 + sh * 0.12); // core pulses very slightly
+
+    const sh = this.shimmer;
+    const pulse = formation.pulse || 0;
+    const pulseMag = formation.pulseIntensity ?? 0.12;
+    const sparkleFade = this.sparkle ? 0.5 : 1;
+    const alpha = clamp(influence, 0.05, 1) * globalFade * sparkleFade;
+
+    let rx = this.renderX;
+    let ry = this.renderY;
+    if (formation.lockScale && formation.lockScale !== 1 && phase !== "dissolving") {
+      rx = formation.center.x + (rx - formation.center.x) * formation.lockScale;
+      ry = formation.center.y + (ry - formation.center.y) * formation.lockScale;
+    }
+    const rR = this.ringR;
+    const cR = this.coreR * (0.88 + sh * 0.12) * (1 + pulse * pulseMag);
+
+    // ---- soft glow, only near completion / during hold — kept very subtle ----
+    const glowAmt = Math.max(formation.glow || 0, pulse * 0.6);
+    if (glowAmt > 0.01 && phase !== "dissolving") {
+      ctx.globalAlpha = alpha * glowAmt * 0.3;
+      ctx.shadowBlur = rR * 1.6;
+      ctx.shadowColor = "rgba(255,255,255,0.85)";
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      ctx.beginPath();
+      ctx.arc(rx, ry, rR * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
 
     // ---- Layer 1: outer gray ring (makes the circle-with-ring appearance) ----
     ctx.globalAlpha = alpha * 0.55;
@@ -423,31 +521,100 @@ class ShimmerDotParticle {
   }
 }
 
-let activeFormation = null;
+let activeFormations = [];   // multiple formations can be alive at once (seamless digit/word transitions)
 let globalTimeSec = 0;
 
-async function playFormation(points, cellSize) {
+function getPointsBounds(points) {
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  return { minX, maxX, minY, maxY, centerX: (minX + maxX) / 2, centerY: (minY + maxY) / 2 };
+}
+
+// per-frame bookkeeping for a formation's glow (called once per formation, not per particle)
+function updateFormationMeta(formation, timeSec) {
+  if (formation.phase === "forming") {
+    formation.glow = clamp((formation.t - 0.7) / 0.3, 0, 1) * 0.8;
+  } else if (formation.phase === "holding") {
+    formation.glow = 0.32 + Math.sin(timeSec * 1.1) * 0.08;
+  } else {
+    formation.glow = 0;
+  }
+}
+
+async function playFormation(points, cellSize, opts = {}) {
+  const bounds = getPointsBounds(points);
   const particles = points.map((p) => {
-    const d = new ShimmerDotParticle(cellSize);
+    const d = new ShimmerDotParticle(cellSize, opts);
     d.targetX = p.x;
     d.targetY = p.y;
     return d;
   });
-  const formation = { particles, influence: 0 };
-  activeFormation = formation;
+
+  // secondary sparkle particles — decorative only, keep sparse words from looking empty
+  if (opts.sparkleCount) {
+    for (let i = 0; i < opts.sparkleCount; i++) {
+      const sp = new ShimmerDotParticle(cellSize * 0.5, { ...opts, sparkle: true });
+      sp.targetX = rand(bounds.minX - cellSize, bounds.maxX + cellSize);
+      sp.targetY = rand(bounds.minY - cellSize, bounds.maxY + cellSize);
+      particles.push(sp);
+    }
+  }
+
+  const formation = {
+    particles,
+    t: 0,                 // 0->1 raw linear progress (forming) or dissolve progress (dissolving)
+    phase: "forming",
+    glow: 0,
+    pulse: 0,
+    pulseIntensity: opts.pulseIntensity ?? 0.12,
+    lockScale: 1,
+    dissolveElapsed: 0,
+    center: { x: canvasWidth / 2, y: bounds.centerY }
+  };
+  activeFormations.push(formation);
   return formation;
 }
 
+// raw linear tween — each particle applies its own easing/delay/overshoot on top of this
 async function formIn(formation, ms) {
-  await tweenValue(formation, "influence", 0, 1, ms, easeOutCubic);
+  await tweenValue(formation, "t", 0, 1, ms, (t) => t);
+  formation.phase = "holding";
+  formation.t = 1;
 }
+
+// brief hold -> pulse -> crack-apart -> dissolve into background dust
 async function formOut(formation, ms) {
-  for (const p of formation.particles) {
-    p.fallX = p.renderX;
-    p.fallY = p.renderY;
-  }
-  await tweenValue(formation, "influence", 1, 0, ms, easeInOutCubic);
-  if (activeFormation === formation) activeFormation = null;
+  formation.phase = "dissolving";
+  formation.t = 0;
+  formation.dissolveElapsed = 0;
+  const start = performance.now();
+  await new Promise((resolve) => {
+    function step(now) {
+      const elapsed = now - start;
+      formation.dissolveElapsed = elapsed;
+      formation.t = clamp(elapsed / ms, 0, 1);
+      if (formation.t < 1) requestAnimationFrame(step);
+      else resolve();
+    }
+    requestAnimationFrame(step);
+  });
+  const idx = activeFormations.indexOf(formation);
+  if (idx !== -1) activeFormations.splice(idx, 1);
+}
+
+// short bright bump right before a formation breaks apart (~100-220ms)
+async function pulseFormation(formation, ms = 100) {
+  await tweenValue(formation, "pulse", 0, 1, ms * 0.45, easeOutCubic);
+  await tweenValue(formation, "pulse", 1, 0, ms * 0.55, easeInOutCubic);
+}
+
+// word "locking" into its final shape: scale 0.94 -> 1.035 -> 1.0
+async function playLockScale(formation) {
+  formation.lockScale = 0.94;
+  await tweenValue(formation, "lockScale", 0.94, 1.035, 90, easeOutCubic);
+  await tweenValue(formation, "lockScale", 1.035, 1.0, 110, easeInOutCubic);
 }
 
 async function playDigit(str) {
@@ -456,19 +623,50 @@ async function playDigit(str) {
   // to set ringR (46% of cs) and coreR (28% of cs).
   const cs = Math.round(canvasHeight * 0.62 / 7);
   const points = sampleTextPoints(str, { cellSize: cs });
-  const formation = await playFormation(points, cs);
+  const formation = await playFormation(points, cs, {
+    maxDelay: 0.2,
+    overshootChance: 0.35,
+    overshootMag: 0.5,
+    driftScale: 1,
+    microAmp: 1.5,
+    pulseIntensity: 0.14
+  });
+
   await formIn(formation, CONFIG.timing.digitFormMs);
-  await sleep(CONFIG.timing.digitHoldMs);
-  await formOut(formation, CONFIG.timing.digitDissolveMs);
+
+  const pulseMs = 100;
+  await sleep(Math.max(0, CONFIG.timing.digitHoldMs - pulseMs));
+  await pulseFormation(formation, pulseMs); // hold -> pulse
+
+  // crack apart & dissolve; let the next digit start falling before this one
+  // has fully faded, so 3 -> 2 -> 1 feels seamless rather than gapped
+  const dissolving = formOut(formation, CONFIG.timing.digitDissolveMs);
+  await sleep(CONFIG.timing.digitDissolveMs * 0.65);
+  dissolving.catch(() => {}); // let the tail end of the dissolve finish in the background
 }
+
+const WORD_PROFILES = {
+  you:  { maxDelay: 0.16, overshootChance: 0.25, overshootMag: 0.4, driftScale: 0.7,  fallSpread: 1.0, microAmp: 1.0, brightPulseChance: 0.12, sparkleCount: 0,  pulseIntensity: 0.10, dramatic: false },
+  are:  { maxDelay: 0.2,  overshootChance: 0.5,  overshootMag: 0.7, driftScale: 1.2,  fallSpread: 1.4, microAmp: 1.1, brightPulseChance: 0.22, sparkleCount: 6,  pulseIntensity: 0.12, dramatic: false },
+  my:   { maxDelay: 0.14, overshootChance: 0.4,  overshootMag: 0.5, driftScale: 0.5,  fallSpread: 0.7, microAmp: 1.0, brightPulseChance: 0.16, sparkleCount: 10, pulseIntensity: 0.12, dramatic: false },
+  love: { maxDelay: 0.26, overshootChance: 0.6,  overshootMag: 0.9, driftScale: 1.5,  fallSpread: 1.8, microAmp: 1.3, brightPulseChance: 0.3,  sparkleCount: 8,  pulseIntensity: 0.24, dramatic: true }
+};
 
 async function playWord(str) {
   // Word fills ~24% of screen height.
   const cs = Math.round(canvasHeight * 0.24 / 7);
   const points = sampleTextPoints(str, { cellSize: cs });
-  const formation = await playFormation(points, cs);
+  const profile = WORD_PROFILES[str.toLowerCase()] || WORD_PROFILES.you;
+
+  const formation = await playFormation(points, cs, profile);
+
   await formIn(formation, CONFIG.timing.wordFormMs);
-  await sleep(CONFIG.timing.wordHoldMs);
+  await playLockScale(formation); // word "locks" into its final shape
+
+  const pulseMs = profile.dramatic ? 220 : 120;
+  await sleep(Math.max(0, CONFIG.timing.wordHoldMs - pulseMs));
+  await pulseFormation(formation, pulseMs); // soft pulse before letting go
+
   await formOut(formation, CONFIG.timing.wordDissolveMs);
 }
 
@@ -649,9 +847,10 @@ function frame(now) {
   rain.update(dt);
   rain.draw(1);
 
-  if (activeFormation) {
-    for (const p of activeFormation.particles) p.update(dt, activeFormation.influence, timeSec);
-    for (const p of activeFormation.particles) p.draw(activeFormation.influence, 1);
+  for (const formation of activeFormations) {
+    updateFormationMeta(formation, timeSec);
+    for (const p of formation.particles) p.update(dt, formation, timeSec);
+    for (const p of formation.particles) p.draw(formation, 1);
   }
 
   updateAndDrawBurst(dt);
@@ -723,7 +922,7 @@ async function runSequence() {
 
   for (let n = CONFIG.countdownFrom; n >= 1; n--) {
     await playDigit(String(n));
-    await sleep(150);
+    await sleep(40);
   }
 
   await playBurst();
