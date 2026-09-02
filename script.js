@@ -726,7 +726,7 @@ async function playWord(str) {
   // and capped by width so a wider word (e.g. "Love") never overflows the screen.
   const mobile = isMobile();
   const heightRatio = mobile ? 0.16 : 0.2;
-  const maxWidthRatio = mobile ? 0.84 : 0.72;
+  const maxWidthRatio = mobile ? 0.76 : 0.72;
   const { cs, points } = fitWordCellSize(str, heightRatio, maxWidthRatio);
   const profile = WORD_PROFILES[str.toLowerCase()] || WORD_PROFILES.you;
 
