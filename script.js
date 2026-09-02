@@ -319,6 +319,57 @@ function fitFontSize(text, targetWidthRatio, startPx) {
   return px;
 }
 
+// Dense filled-numeral sampler — rasterizes a bold digit and samples the
+// solid shape on a fine staggered grid, giving a chunky "packed with tiny
+// lights" numeral instead of a sparse 5x7 dot-matrix outline.
+function sampleFilledGlyphPoints(text, { targetHeightRatio = 0.62, spacing = 11, y = null } = {}) {
+  const glyph = String(text);
+  const targetH = canvasHeight * targetHeightRatio;
+
+  // find a font size whose rendered glyph height matches targetH
+  let px = targetH * 1.3;
+  offCtx.font = `800 ${px}px 'Poppins', 'Arial Black', sans-serif`;
+  let m = offCtx.measureText(glyph);
+  let capH = (m.actualBoundingBoxAscent || px * 0.72) + (m.actualBoundingBoxDescent || 0);
+  if (capH > 0) px *= targetH / capH;
+  offCtx.font = `800 ${px}px 'Poppins', 'Arial Black', sans-serif`;
+  m = offCtx.measureText(glyph);
+  const ascent = m.actualBoundingBoxAscent || px * 0.72;
+  const descent = m.actualBoundingBoxDescent || 0;
+
+  // render the glyph, solid white, centered on the offscreen canvas
+  offCtx.save();
+  offCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+  offCtx.fillStyle = "#fff";
+  offCtx.textAlign = "left";
+  offCtx.textBaseline = "alphabetic";
+  const drawX = (canvasWidth - m.width) / 2 - (m.actualBoundingBoxLeft || 0);
+  const centerY = typeof y === "number" ? y : canvasHeight * 0.44;
+  const drawY = centerY - (ascent + descent) / 2 + ascent;
+  offCtx.fillText(glyph, drawX, drawY);
+  offCtx.restore();
+
+  // sample the filled shape on a fine, row-staggered grid (organic packed look)
+  const imageData = offCtx.getImageData(0, 0, off.width, off.height);
+  const data = imageData.data;
+  const stepDevice = Math.max(1, Math.round(spacing * dpr));
+  const points = [];
+  let rowIndex = 0;
+  for (let sy = 0; sy < off.height; sy += stepDevice, rowIndex++) {
+    const rowOffset = rowIndex % 2 === 0 ? 0 : stepDevice / 2;
+    for (let sx = rowOffset; sx < off.width; sx += stepDevice) {
+      const idx = (Math.floor(sy) * off.width + Math.floor(sx)) * 4 + 3; // alpha channel
+      if (data[idx] > 140) {
+        const jx = (Math.random() - 0.5) * spacing * 0.3;
+        const jy = (Math.random() - 0.5) * spacing * 0.3;
+        points.push({ x: sx / dpr + jx, y: sy / dpr + jy });
+      }
+    }
+  }
+  offCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+  return points;
+}
+
 /* ============================================================
    FORMATION PARTICLES — tiny falling dots (background effect)
    ============================================================ */
@@ -618,11 +669,11 @@ async function playLockScale(formation) {
 }
 
 async function playDigit(str) {
-  // Digit fills ~62% of screen height.
-  // Cell size passed directly to ShimmerDotParticle which uses it
-  // to set ringR (46% of cs) and coreR (28% of cs).
-  const cs = Math.round(canvasHeight * 0.62 / 7);
-  const points = sampleTextPoints(str, { cellSize: cs });
+  // Digit fills ~62% of screen height, sampled as a dense filled numeral
+  // (bold rasterized glyph, staggered grid) instead of a sparse dot-matrix font.
+  const spacing = clamp(Math.round(canvasHeight * 0.014), 7, 13);
+  const points = sampleFilledGlyphPoints(str, { targetHeightRatio: 0.62, spacing });
+  const cs = spacing * 1.55; // controls each dot's ring/core size — slight overlap for a solid filled look
   const formation = await playFormation(points, cs, {
     maxDelay: 0.2,
     overshootChance: 0.35,
@@ -643,39 +694,6 @@ async function playDigit(str) {
   const dissolving = formOut(formation, CONFIG.timing.digitDissolveMs);
   await sleep(CONFIG.timing.digitDissolveMs * 0.65);
   dissolving.catch(() => {}); // let the tail end of the dissolve finish in the background
-}
-
-// Display the countdown digit as a simple 3x3 grid of points
-async function playDigitGrid(str) {
-  const centerX = canvasWidth / 2;
-  const centerY = canvasHeight * 0.44;
-
-  // cell size approximately related to viewport; spacing between grid cells
-  const cs = Math.round(Math.min(canvasWidth, canvasHeight) * 0.045);
-  const spacing = Math.round(cs * 1.6);
-
-  const points = [];
-  for (let r = 0; r < 3; r++) {
-    for (let c = 0; c < 3; c++) {
-      points.push({
-        x: centerX + (c - 1) * spacing,
-        y: centerY + (r - 1) * spacing
-      });
-    }
-  }
-
-  const formation = await playFormation(points, cs, {
-    maxDelay: 0.12,
-    overshootChance: 0.2,
-    overshootMag: 0.4,
-    driftScale: 0.6,
-    microAmp: 0.8,
-    pulseIntensity: 0.10
-  });
-
-  await formIn(formation, CONFIG.timing.digitFormMs);
-  await sleep(CONFIG.timing.digitHoldMs);
-  await formOut(formation, CONFIG.timing.digitDissolveMs);
 }
 
 const WORD_PROFILES = {
@@ -954,7 +972,7 @@ async function runSequence() {
   await sleep(CONFIG.timing.introMs);
 
   for (let n = CONFIG.countdownFrom; n >= 1; n--) {
-    await playDigitGrid(String(n));
+    await playDigit(String(n));
     await sleep(40);
   }
 
