@@ -11,7 +11,7 @@ const CONFIG = {
   words: ["You", "Are", "My", "Love"],
   finalBefore: "I Love",
   finalHeart: "\u2764",
-  finalAfter: "You",
+  finalAfter: "You CANTIKAAA",
 
   music: "music.mp3",
 
