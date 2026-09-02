@@ -705,12 +705,29 @@ const WORD_PROFILES = {
   love: { maxDelay: 0.26, overshootChance: 0.6,  overshootMag: 0.9, driftScale: 1.5,  fallSpread: 1.8, microAmp: 1.3, brightPulseChance: 0.3,  sparkleCount: 8,  pulseIntensity: 0.24, dramatic: true }
 };
 
+// picks a cell size for the word that hits the target height, then shrinks it
+// further if the resulting text would run wider than the screen allows
+function fitWordCellSize(str, heightRatio, maxWidthRatio) {
+  let cs = Math.round(canvasHeight * heightRatio / 7);
+  let points = sampleTextPoints(str, { cellSize: cs });
+  const bounds = getPointsBounds(points);
+  const width = bounds.maxX - bounds.minX;
+  const maxWidth = canvasWidth * maxWidthRatio;
+  if (width > maxWidth && width > 0) {
+    const scale = maxWidth / width;
+    cs = Math.max(4, Math.round(cs * scale));
+    points = sampleTextPoints(str, { cellSize: cs });
+  }
+  return { cs, points };
+}
+
 async function playWord(str) {
-  // Word size — smaller on mobile so it doesn't dominate the phone screen.
+  // Word size — smaller on mobile so it doesn't dominate the phone screen,
+  // and capped by width so a wider word (e.g. "Love") never overflows the screen.
   const mobile = isMobile();
   const heightRatio = mobile ? 0.16 : 0.2;
-  const cs = Math.round(canvasHeight * heightRatio / 7);
-  const points = sampleTextPoints(str, { cellSize: cs });
+  const maxWidthRatio = mobile ? 0.84 : 0.72;
+  const { cs, points } = fitWordCellSize(str, heightRatio, maxWidthRatio);
   const profile = WORD_PROFILES[str.toLowerCase()] || WORD_PROFILES.you;
 
   const formation = await playFormation(points, cs, profile);
